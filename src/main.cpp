@@ -27,14 +27,14 @@ using namespace std::chrono_literals;
 constexpr time_t DAY_DURATION = std::chrono::duration_cast<std::chrono::seconds>(24h).count();
 
 // Helper function to change a string to lowercase form.
-std::string toLower(std::string& s) {
+std::string toLower(std::string* s) {
     
-    for (size_t i = 0; i < s.size(); i++)
+    for (size_t i = 0; i < s->size(); i++)
     {
-        s.data()[i] = tolower(s[i]);
+        s->data()[i] = tolower(s->at(i));
     }
     
-    return s;
+    return *s;
 }
 
 using extensionMapping = std::map<std::string_view, std::string_view>;
@@ -137,6 +137,8 @@ struct SortRule
     DateSortRule lastModifyDate;
 
     DateSortRule lastAccessDate;
+
+    bool moveHiddenFiles = false;
 };
 
 // Sort files based on sort rules
@@ -160,13 +162,24 @@ void sortFiles(std::string src, std::string dest, SortRule sr) {
             continue;
         }
 
+        if (sr.moveHiddenFiles && file.filename().string()[0] == '.') {
+            std::filesystem::create_directories(dest + "/.hidden");
+            std::filesystem::rename(file, dest + "/.hidden/" + file.filename().string());
+            continue;
+        }
+
         if (sr.sortMode == SortMode::SORT_EXTENSION) {
             std::map<std::string_view, std::string_view>& extMap = sr.extension.extMap;
-            auto extensionIt = extMap.find(file.extension().string());
+            
+            auto extensionIt = extMap.find(toLower(&file.extension().string()));
 
             if (extensionIt != extMap.end()) {
                 std::filesystem::create_directories(dest + "/" + extensionIt->second.data());
                 std::filesystem::rename(file, dest + "/" + extensionIt->second.data() + "/" + file.filename().string());
+            }
+            else if (sr.extension.sortUnknownExt) {
+                std::filesystem::create_directories(dest + "/unknown");
+                std::filesystem::rename(file, dest + "/unknown/" + file.filename().string());
             }
         }
         else if (sr.sortMode == SortMode::SORT_CREATION_DATE) {
@@ -358,8 +371,8 @@ int main(int argc, char* argv[]) {
             sr.sortMode = SortMode::SORT_EXTENSION;
             sr.extension = {extensionToFolder, moveUnknownFiles};
         }
-        else if (std::string(argv[i]) == moveUnknownFiles_flag) moveUnknownFiles = true;
-        else if (std::string(argv[i]) == moveHiddenFiles_flag) moveHiddenFiles = true;
+        else if (std::string(argv[i]) == moveUnknownFiles_flag) sr.extension.sortUnknownExt = true;
+        else if (std::string(argv[i]) == moveHiddenFiles_flag) sr.moveHiddenFiles = true;
         else if (std::string(argv[i]) == sortSize_flag) {
             sr.sortMode = SortMode::SORT_SIZE;
 
