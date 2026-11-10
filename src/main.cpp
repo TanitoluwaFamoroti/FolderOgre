@@ -1,21 +1,29 @@
 #include <iostream>
-#include <filesystem>
-#include <vector>
 #include <string>
+#include <sstream>
+
+#include <vector>
 #include <map>
-#include <locale>
-#include <cstdlib>
-#include <stdio.h>
-#include <charconv>
+
 #include <chrono>
-#include <ctime>
+
+#include <filesystem>
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
+#ifdef __linux__
 #include <sys/stat.h>
+#include <fcntl.h>
+#endif
+
+// TODO: Add support for moving files based on their size
+// TODO: Add support for moving files based on their name
+// TODO: Add JSON configuration file for file type to folder mapping
 
 using namespace std::chrono_literals;
+// Constant for the duration of a day in seconds
 constexpr time_t DAY_DURATION = std::chrono::duration_cast<std::chrono::seconds>(24h).count();
 
 // Helper function to change a string to lowercase form.
@@ -29,15 +37,9 @@ std::string toLower(std::string& s) {
     return s;
 }
 
-// TODO: Add support for moving files based on their creation date
-// TODO: Add support for moving files based on their last modified date
-// TODO: Add support for moving files based on their last accessed date
-// TODO: Add support for moving files based on their size
-// TODO: Add support for moving files based on their name
-// TODO: Add JSON configuration file for file type to folder mapping
-
 using extensionMapping = std::map<std::string_view, std::string_view>;
 
+// Default mapping of file extensions to their corresponding folder names.
 const extensionMapping extensionToFolder = {
     {".jpg", "images"},
     {".jpeg", "images"},
@@ -55,23 +57,34 @@ const extensionMapping extensionToFolder = {
     {".flac", "audio"},
     {".aac", "audio"},
     {".ogg", "audio"},
-    {".pdf", "documents"},
+    {".doc", "documents"},
     {".docx", "documents"},
+    {".pdf", "documents"},
     {".txt", "documents"},
+    {".xls", "documents"},
     {".xlsx", "documents"},
-    {".pptx", "documents"}
-};
-
-// Data structure for storing relevant file info for later sorting.
-struct FileStatus
-{
-    std::string_view path;
-    std::string ext;
-    std::time_t creationTime;
-    std::time_t lastModifyTime;
-    std::time_t lastAccessTime;
-    std::size_t fileSize;
-    bool isHidden;
+    {".ppt", "documents"},
+    {".pptx", "documents"},
+    {".odt", "documents"},
+    {".ods", "documents"},
+    {".odp", "documents"},
+    {".rtf", "documents"},
+    {".csv", "documents"},
+    {".html", "documents"},
+    {".css", "documents"},
+    {".js", "documents"},
+    {".json", "documents"},
+    {".xml", "documents"},
+    {".eml", "emails"},
+    {".zip", "archives"},
+    {".rar", "archives"},
+    {".7z", "archives"},
+    {".tar", "archives"},
+    {".gz", "archives"},
+    {".exe", "executables"},
+    {".msi", "executables"},
+    {".bat", "executables"},
+    {".sh", "executables"}
 };
 
 // Enumeration of sort modes.
@@ -84,17 +97,30 @@ enum SortMode {
     SORT_SIZE
 };
 
-// Enumeration of date sort modes.
-enum DateSortMode {
+// Enumeration of possible comparisons
+enum Comparison {
     INVALID,
-    BEFORE_DATE,
-    ON_DATE,
-    AFTER_DATE
+    LESSER,
+    EQUALS,
+    GREATER
 };
 
+// Data structure for storing extension sorting rules.
+struct ExtensionSortRule {
+    extensionMapping extMap;
+    bool sortUnknownExt;
+};
+
+// Data structure for storing size sorting rules.
+struct SizeSortRule {
+    size_t size;
+    Comparison comparison = Comparison::INVALID;
+};
+
+// Data structure for storing date sorting parameters/rules.
 struct DateSortRule {
     std::chrono::year_month_day date{};
-    DateSortMode dateSortMode = DateSortMode::INVALID;
+    Comparison comparison = Comparison::INVALID;
 };
 
 // Data structure for storing sorting parameters/rules.
@@ -102,115 +128,19 @@ struct SortRule
 {
     SortMode sortMode;
 
-    extensionMapping extensionCategory;
+    ExtensionSortRule extension;
+
+    SizeSortRule fileSize;
 
     DateSortRule creationDate;
 
     DateSortRule lastModifyDate;
 
     DateSortRule lastAccessDate;
-
-    std::size_t fileSize;
 };
-
-
-// Get file extension of file at path.
-std::string getFileExtension(const std::string_view& path) {
-    std::filesystem::path filePath(path);
-    std::string ext = filePath.extension().string();
-    toLower(ext);
-    return ext;
-}
-
-// Get creation time of file at path.
-std::time_t getFileCreationTime(const std::string_view& path) {
-    struct stat file_stat;
-
-    if (stat(path.data(), &file_stat) == 0)
-    {
-        return file_stat.st_ctim.tv_sec;
-    }
-    else {
-        std::cerr << "Failed to read creation time for file at: " << path;
-        return -1;
-    }
-}
-
-// Get last modify time of file at path.
-std::time_t getFileLastModifyTime(const std::string_view& path) {
-    struct stat file_stat;
-
-    if (stat(path.data(), &file_stat) == 0)
-    {
-        return file_stat.st_mtim.tv_sec;
-    }
-    else {
-        std::cerr << "Failed to read last modify time for file at: " << path;
-        return -1;
-    }
-}
-
-// Get last access time of file at path.
-std::time_t getFileLastAccessTime(const std::string_view& path) {
-    struct stat file_stat;
-
-    if (stat(path.data(), &file_stat) == 0)
-    {
-        return file_stat.st_atim.tv_sec;
-    }
-    else {
-        std::cerr << "Failed to read last modify time for file at: " << path;
-        return -1;
-    }
-}
-
-// Get last size in bytes of file at path.
-std::size_t getFileSize(const std::string_view& path) {
-    struct stat file_stat;
-
-    if (stat(path.data(), &file_stat) == 0)
-    {
-        return file_stat.st_size;
-    }
-    else {
-        std::cerr << "Failed to read last modify time for file at: " << path;
-        return 0;
-    }
-}
-
-// Get whether file at path is hidden.
-bool getFileIsHidden(const std::string_view& path) {
-    std::filesystem::path p {path};
-
-    return p.filename().string()[0] == '.';
-}
-
-// Get all relevant info from files
-FileStatus getFileInfo(const std::string_view& path) {
-    FileStatus fs;
-
-    fs.path = path;
-    fs.ext = getFileExtension(path);
-    fs.creationTime = getFileCreationTime(path);
-    fs.lastModifyTime = getFileLastModifyTime(path);
-    fs.lastAccessTime = getFileLastAccessTime(path);
-    fs.fileSize = getFileSize(path);
-    fs.isHidden = getFileIsHidden(path);
-
-    return fs;
-}
-
 
 // Sort files based on sort rules
 void sortFiles(std::string src, std::string dest, SortRule sr) {
-
-    /* 
-        Iterate through source folder
-        If a file is seen create a FileStatus object
-        If a folder is seen put it into a vector for later parsing
-        Sort files by highest priority
-        then get a list of all files and 
-    */
 
     std::vector<std::filesystem::path> files;
     std::filesystem::path srcdir(src);
@@ -223,11 +153,16 @@ void sortFiles(std::string src, std::string dest, SortRule sr) {
     }
 
     for (const auto& file : files) {
-        FileStatus f = getFileInfo(file.string());
+        struct statx file_stat;
+        int result = statx(AT_FDCWD, file.c_str(), AT_STATX_SYNC_AS_STAT, STATX_BTIME | STATX_MTIME | STATX_ATIME | STATX_SIZE, &file_stat);
+        if (result != 0) {
+            std::cerr << "Failed to read file status for file at: " << file << std::endl;
+            continue;
+        }
 
         if (sr.sortMode == SortMode::SORT_EXTENSION) {
-            std::map<std::string_view, std::string_view>& extMap = sr.extensionCategory;
-            auto extensionIt = extMap.find(f.ext);
+            std::map<std::string_view, std::string_view>& extMap = sr.extension.extMap;
+            auto extensionIt = extMap.find(file.extension().string());
 
             if (extensionIt != extMap.end()) {
                 std::filesystem::create_directories(dest + "/" + extensionIt->second.data());
@@ -248,23 +183,23 @@ void sortFiles(std::string src, std::string dest, SortRule sr) {
             std::stringstream ss;
             ss << sr.creationDate.date;
 
-           if (sr.creationDate.dateSortMode == DateSortMode::ON_DATE)
+           if (sr.creationDate.comparison == Comparison::EQUALS)
            {
-                if (f.creationTime >= lowerTimeBound && f.creationTime < upperTimeBound) {
+                if (file_stat.stx_btime.tv_sec >= lowerTimeBound && file_stat.stx_btime.tv_sec < upperTimeBound) {
                     std::filesystem::create_directories(dest + "/" + "Created on " + ss.str());
                     std::filesystem::rename(file, dest + "/" + "Created on " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.creationDate.dateSortMode == DateSortMode::BEFORE_DATE)
+           else if (sr.creationDate.comparison == Comparison::LESSER)
            {
-                if (f.creationTime < lowerTimeBound) {
+                if (file_stat.stx_btime.tv_sec < lowerTimeBound) {
                     std::filesystem::create_directories(dest + "/" + "Created before " + ss.str());
                     std::filesystem::rename(file, dest + "/" + "Created before " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.creationDate.dateSortMode == DateSortMode::AFTER_DATE)
+           else if (sr.creationDate.comparison == Comparison::GREATER)
            {
-                if (f.creationTime >= upperTimeBound) {
+                if (file_stat.stx_btime.tv_sec >= upperTimeBound) {
                     std::filesystem::create_directories(dest + "/" + "Created after " + ss.str());
                     std::filesystem::rename(file, dest + "/" + "Created after " + ss.str() + "/" + file.filename().string());
                 }    
@@ -284,25 +219,25 @@ void sortFiles(std::string src, std::string dest, SortRule sr) {
             std::stringstream ss;
             ss << sr.lastModifyDate.date;
 
-           if (sr.lastModifyDate.dateSortMode == DateSortMode::ON_DATE)
+           if (sr.lastModifyDate.comparison == Comparison::EQUALS)
            {
-                if (f.lastModifyTime >= lowerTimeBound && f.lastModifyTime < upperTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created on " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created on " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_mtime.tv_sec >= lowerTimeBound && file_stat.stx_mtime.tv_sec < upperTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last modified on " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last modified on " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.lastModifyDate.dateSortMode == DateSortMode::BEFORE_DATE)
+           else if (sr.lastModifyDate.comparison == Comparison::LESSER)
            {
-                if (f.lastModifyTime < lowerTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created before " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created before " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_mtime.tv_sec < lowerTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last modified before " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last modified before " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.lastModifyDate.dateSortMode == DateSortMode::AFTER_DATE)
+           else if (sr.lastModifyDate.comparison == Comparison::EQUALS)
            {
-                if (f.lastModifyTime >= upperTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created after " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created after " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_mtime.tv_sec >= upperTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last modified after " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last modified after " + ss.str() + "/" + file.filename().string());
                 }    
            }  
         }
@@ -314,131 +249,79 @@ void sortFiles(std::string src, std::string dest, SortRule sr) {
             /*
             Take an input date and covert it into time_t.
             Define bounds for on that day by adding or removing seconds in the day
-            Find where the file lands in these bounds and assign it to the correct file.
+            Find where the file lands in these bounds and assign it to the correct folder.
             */
 
             std::stringstream ss;
             ss << sr.lastAccessDate.date;
 
-           if (sr.lastAccessDate.dateSortMode == DateSortMode::ON_DATE)
+           if (sr.lastAccessDate.comparison == Comparison::EQUALS)
            {
-                if (f.lastAccessTime >= lowerTimeBound && f.lastAccessTime < upperTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created on " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created on " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_atime.tv_sec >= lowerTimeBound && file_stat.stx_atime.tv_sec < upperTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last accessed on " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last accessed on " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.lastAccessDate.dateSortMode == DateSortMode::BEFORE_DATE)
+           else if (sr.lastAccessDate.comparison == Comparison::LESSER)
            {
-                if (f.lastAccessTime < lowerTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created before " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created before " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_atime.tv_sec < lowerTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last accessed before " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last accessed before " + ss.str() + "/" + file.filename().string());
                 }    
            }
-           else if (sr.lastAccessDate.dateSortMode == DateSortMode::AFTER_DATE)
+           else if (sr.lastAccessDate.comparison == Comparison::GREATER)
            {
-                if (f.lastAccessTime >= upperTimeBound) {
-                    std::filesystem::create_directories(dest + "/" + "Created after " + ss.str());
-                    std::filesystem::rename(file, dest + "/" + "Created after " + ss.str() + "/" + file.filename().string());
+                if (file_stat.stx_atime.tv_sec >= upperTimeBound) {
+                    std::filesystem::create_directories(dest + "/" + "Last accessed after " + ss.str());
+                    std::filesystem::rename(file, dest + "/" + "Last accessed after " + ss.str() + "/" + file.filename().string());
                 }    
            }
         }
         else if (sr.sortMode == SortMode::SORT_SIZE) {
-            
+            size_t sizeKb = file_stat.stx_size / 1024;
+
+            if (sr.fileSize.comparison == Comparison::LESSER)
+            {
+                if (sizeKb < sr.fileSize.size)
+                {
+                    std::filesystem::create_directories(dest + "/" + "Size less than " + std::to_string(sr.fileSize.size) + "KB");
+                    std::filesystem::rename(file, dest + "/" + "Size less than " + std::to_string(sr.fileSize.size) + "KB/" + file.filename().string());
+                }
+            }
+            else if (sr.fileSize.comparison == Comparison::GREATER)
+            {
+                if (sizeKb >= sr.fileSize.size)
+                {
+                    std::filesystem::create_directories(dest + "/" + "Size greater than " + std::to_string(sr.fileSize.size) + "KB");
+                    std::filesystem::rename(file, dest + "/" + "Size greater than " + std::to_string(sr.fileSize.size) + "KB/" + file.filename().string());
+                }
+            }
         }
-        
-
-    //     if (file.filename().string()[0] == '.' && moveHiddenFiles) {
-    //         std::filesystem::create_directories(dest.string() + "/.hidden");
-    //         std::filesystem::rename(file, dest.string() + "/.hidden/" + file.filename().string());
-    //         fileSorted = true;
-    //         fileSortType = "hidden";
-    //     }
-    //     else if (extensionIt != extensionToFolder.end()) {
-            
-    //     }
-    //     else if (moveUnknownFiles) {
-    //         std::filesystem::create_directories(destinationPath.string() + "/unknown");
-    //         std::filesystem::rename(file, destinationPath.string() + "/unknown/" + file.filename().string());
-    //         fileSorted = true;
-    //         fileSortType = "unknown";
-    //     }
-
-    //     if (!fileSorted) {
-    //         std::cout << "File not sorted: " << file << std::endl;
-    //     }
-    //     else {
-    //         std::cout << "File sorted as " << fileSortType << ": " << file << std::endl;
-    //     }
-
-    //     fileSorted = false; // Reset for next file
-    // }
-
-    // if (sortHiddenFiles) {
-    //     std::filesystem::path hiddenFolderPath = destinationPath.string() + "/.hidden";
-
-    //     std::vector<std::filesystem::path> hiddenFolderContents;
-
-    //     for (const auto& entry : std::filesystem::directory_iterator(hiddenFolderPath)) {
-    //         if (entry.is_regular_file()) {
-    //             hiddenFolderContents.push_back(entry.path());
-    //         }
-    //     }
-
-    //     for (const auto& file : hiddenFolderContents) {
-    //         std::string extension = getFileExtension(file);
-    //         toLower(extension);
-
-    //         extensionIt = extensionToFolder.find(extension);
-            
-    //         if (extensionIt != extensionToFolder.end()) {
-    //             std::filesystem::create_directories(destinationPath.string() + "/" + extensionIt->second);
-    //             std::filesystem::rename(file, destinationPath.string() + "/" + extensionIt->second + "/" + file.filename().string());
-    //             fileSorted = true;
-    //             fileSortType = extensionIt->second;
-    //         }
-    //         else if (moveUnknownFiles) {
-    //             std::filesystem::create_directories(destinationPath.string() + "/unknown");
-    //             std::filesystem::rename(file, destinationPath.string() + "/unknown/" + file.filename().string());
-    //             fileSorted = true;
-    //             fileSortType = "unknown";
-    //         }
-
-    //         if (!fileSorted) {
-    //             std::cout << "File not sorted: " << file << std::endl;
-    //         }
-    //         else {
-    //             std::cout << "File sorted as " << fileSortType << ": " << file << std::endl;
-    //         }
-    //     }
     }
 }
 
-bool sortExtension = false;
+
 bool moveUnknownFiles = false;
 bool moveHiddenFiles = false;
-bool sortHiddenFiles = false;
-bool sortCreationDate = false;
-bool sortLastModifyDate = false;
-bool sortLastAccessDate = false;
 
 std::string help_flag = "-h";
 std::string sortExtension_flag = "-e";
 std::string moveUnknownFiles_flag = "-u";
 std::string moveHiddenFiles_flag = "-f";
-std::string sortHiddenFiles_flag = "-F";
+std::string sortSize_flag = "-s";
 std::string sortCreationDate_flag = "-c";
 std::string sortLastModifyDate_flag = "-m";
 std::string sortLastAccessDate_flag = "-a";
 
-
-constexpr std::string_view timeFormat = "%d/%m/%Y";
+const std::string lessThanComparison = "lt";
+const std::string equalsToComparison = "eq";
+const std::string greaterThanComparison = "gt";
 
 bool createdDestinationFolder = false;
 
-int main(int argc, char* argv[]) {
+constexpr std::string_view timeFormat = "%d/%m/%Y";
 
-    DateSortRule dm;
-    SortRule sr;
+int main(int argc, char* argv[]) {
 
     // Check if the correct number of arguments is provided
     if (argc < 3) {
@@ -446,48 +329,50 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    SortRule sr;
+
     // Set options based on command line arguments
     for (size_t i = 3; i < argc; i++)
     {
         if (std::string(argv[i]) == help_flag) {
-            std::cout << "Usage: " << argv[0] << " <source_folder> <destination_folder> [options...]" << std::endl;
+            std::cout << "Usage: " << argv[0] << " <source_folder> <destination_folder> -e [options...] [-u]" << std::endl;
+            std::cout << " " << argv[0] << " <source_folder> <destination_folder> -s <comparison> <date> [options...]" << std::endl;
+            std::cout << " " << argv[0] << " <source_folder> <destination_folder> -c <comparison> <date> [options...]" << std::endl;
+            std::cout << " " << argv[0] << " <source_folder> <destination_folder> -m <comparison> <date> [options...]" << std::endl;
+            std::cout << " " << argv[0] << " <source_folder> <destination_folder> -a <comparison> <date> [options...]" << std::endl;
+
             std::cout << "Options:" << std::endl;
             std::cout << "  -h                 Show this help message" << std::endl;
             std::cout << "  -e                 Sort files by extension" << std::endl;
             std::cout << "  -u                 Move unknown files to 'unknown' folder" << std::endl;
             std::cout << "  -f                 Move hidden files to '.hidden' folder" << std::endl;
-            std::cout << "  -F                 Sort hidden files by extension" << std::endl;
-            std::cout << "  -c <comparison> <date>   Sort files by creation date (comparison: before, on, after)" << std::endl;
-            std::cout << "  -m <comparison> <date>   Sort files by last modify date (comparison: before, on, after)" << std::endl;
-            std::cout << "  -a <comparison> <date>   Sort files by last access date (comparison: before, on, after)" << std::endl;
+            std::cout << "  -s <comparison> <size>   Sort files by size (comparison: lt, gt)" << std::endl;
+            std::cout << "  -c <comparison> <date>   Sort files by creation date (comparison: lt, eq, gt)" << std::endl;
+            std::cout << "  -m <comparison> <date>   Sort files by last modify date (comparison: lt, eq, gt)" << std::endl;
+            std::cout << "  -a <comparison> <date>   Sort files by last access date (comparison: lt, eq, gt)" << std::endl;
+            std::cout << "Size is in kilobytes" << std::endl;
             std::cout << "Date format: " << timeFormat << std::endl;
             return 0;
         }
         else if (std::string(argv[i]) == sortExtension_flag) {
-            sortExtension = true;
-            sr.extensionCategory = extensionToFolder;
+            sr.sortMode = SortMode::SORT_EXTENSION;
+            sr.extension = {extensionToFolder, moveUnknownFiles};
         }
         else if (std::string(argv[i]) == moveUnknownFiles_flag) moveUnknownFiles = true;
         else if (std::string(argv[i]) == moveHiddenFiles_flag) moveHiddenFiles = true;
-        else if (std::string(argv[i]) == sortHiddenFiles_flag) { moveHiddenFiles = true; sortHiddenFiles = true; }
-        else if (std::string(argv[i]) == sortCreationDate_flag) {
-
-            sr.sortMode = SortMode::SORT_CREATION_DATE;
+        else if (std::string(argv[i]) == sortSize_flag) {
+            sr.sortMode = SortMode::SORT_SIZE;
 
             std::string comparison = argv[i + 1];
-            std::string date = argv[i + 2];
+            std::string size = argv[i + 2];
 
-            if (std::string(argv[i + 1]) == "after")
+            if (std::string(argv[i + 1]) == greaterThanComparison)
             {
-                dm.dateSortMode = DateSortMode::AFTER_DATE;
+                sr.fileSize.comparison = Comparison::GREATER;
             }
-            else if (std::string(argv[i + 1]) == "on")
+            else if (std::string(argv[i + 1]) == lessThanComparison)
             {
-                dm.dateSortMode = DateSortMode::ON_DATE;
-            }
-            else if (std::string(argv[i + 1]) == "before")
-            {
-                dm.dateSortMode = DateSortMode::BEFORE_DATE;
+                sr.fileSize.comparison = Comparison::LESSER;
             }
             else
             {
@@ -495,15 +380,48 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            if (dm.dateSortMode == DateSortMode::INVALID) {
+            if (sr.fileSize.comparison == Comparison::INVALID) {
+                break;
+            }
+
+            std::stringstream ss(size);
+            ss >> sr.fileSize.size;
+            
+            i += 2;
+        }
+        else if (std::string(argv[i]) == sortCreationDate_flag) {
+
+            sr.sortMode = SortMode::SORT_CREATION_DATE;
+
+            std::string comparison = argv[i + 1];
+            std::string date = argv[i + 2];
+
+            if (std::string(argv[i + 1]) == greaterThanComparison)
+            {
+                sr.creationDate.comparison = Comparison::GREATER;
+            }
+            else if (std::string(argv[i + 1]) == equalsToComparison)
+            {
+                sr.creationDate.comparison = Comparison::EQUALS;
+            }
+            else if (std::string(argv[i + 1]) == lessThanComparison)
+            {
+                sr.creationDate.comparison = Comparison::LESSER;
+            }
+            else
+            {
+                std::cerr << "Invalid comparison argument after option \"" << sortCreationDate_flag << "\": " << argv[i + 1];
+                break;
+            }
+
+            if (sr.lastModifyDate.comparison == Comparison::INVALID) {
                 break;
             }
 
             std::stringstream ss(date);
-            ss >> std::chrono::parse("%d/%m/%Y", dm.date);
+            ss >> std::chrono::parse("%d/%m/%Y", sr.creationDate.date);
 
             i += 2;
-            sr.creationDate = dm;
         }
         else if (std::string(argv[i]) == sortLastModifyDate_flag) {
             sr.sortMode = SortMode::SORT_LAST_MODIFY_DATE;
@@ -511,17 +429,17 @@ int main(int argc, char* argv[]) {
             std::string comparison = argv[i + 1];
             std::string date = argv[i + 2];
 
-            if (std::string(argv[i + 1]) == "after")
+            if (std::string(argv[i + 1]) == greaterThanComparison)
             {
-                dm.dateSortMode = DateSortMode::AFTER_DATE;
+                sr.lastModifyDate.comparison = Comparison::GREATER;
             }
-            else if (std::string(argv[i + 1]) == "on")
+            else if (std::string(argv[i + 1]) == equalsToComparison)
             {
-                dm.dateSortMode = DateSortMode::ON_DATE;
+                sr.lastModifyDate.comparison = Comparison::EQUALS;
             }
-            else if (std::string(argv[i + 1]) == "before")
+            else if (std::string(argv[i + 1]) == lessThanComparison)
             {
-                dm.dateSortMode = DateSortMode::BEFORE_DATE;
+                sr.lastModifyDate.comparison = Comparison::LESSER;
             }
             else
             {
@@ -529,15 +447,14 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            if (dm.dateSortMode == DateSortMode::INVALID) {
+            if (sr.lastModifyDate.comparison == Comparison::INVALID) {
                 break;
             }
 
             std::stringstream ss(date);
-            ss >> std::chrono::parse("%d/%m/%Y", dm.date);
+            ss >> std::chrono::parse("%d/%m/%Y", sr.lastModifyDate.date);
 
             i += 2;
-            sr.lastModifyDate = dm;
         }
         else if (std::string(argv[i]) == sortLastAccessDate_flag) {
             sr.sortMode = SortMode::SORT_LAST_ACCESS_DATE;
@@ -545,17 +462,17 @@ int main(int argc, char* argv[]) {
             std::string comparison = argv[i + 1];
             std::string date = argv[i + 2];
 
-            if (std::string(argv[i + 1]) == "after")
+            if (std::string(argv[i + 1]) == greaterThanComparison)
             {
-                dm.dateSortMode = DateSortMode::AFTER_DATE;
+                sr.lastAccessDate.comparison = Comparison::GREATER;
             }
-            else if (std::string(argv[i + 1]) == "on")
+            else if (std::string(argv[i + 1]) == equalsToComparison)
             {
-                dm.dateSortMode = DateSortMode::ON_DATE;
+                sr.lastAccessDate.comparison = Comparison::EQUALS;
             }
-            else if (std::string(argv[i + 1]) == "before")
+            else if (std::string(argv[i + 1]) == lessThanComparison)
             {
-                dm.dateSortMode = DateSortMode::BEFORE_DATE;
+                sr.lastAccessDate.comparison = Comparison::LESSER;
             }
             else
             {
@@ -563,15 +480,14 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            if (dm.dateSortMode == DateSortMode::INVALID) {
+            if (sr.lastAccessDate.comparison == Comparison::INVALID) {
                 break;
             }
 
             std::stringstream ss(date);
-            ss >> std::chrono::parse("%d/%m/%Y", dm.date);
+            ss >> std::chrono::parse("%d/%m/%Y", sr.lastAccessDate.date);
 
             i += 2;
-            sr.lastAccessDate = dm;
         }
     }
 
